@@ -6,3 +6,5 @@ We provide two main notebooks, one with a data example to train and test a VAE o
 One can find additional functions important for the models to train, the data to be loaded and preprocessed in the files utils.py, utils_models_MgIIk.py, and utils_features.py. An overview of how the pixels of the IRIS slit are categorized in a preflare observation as active region or quiet sun type spectra is depicted in the following figure:
 ![](Vae_mask2.png)
 
+An example of the yhat probability outputs of our trained models for Mg II h&k is presented here:
+![](yhat_output_example.png)
