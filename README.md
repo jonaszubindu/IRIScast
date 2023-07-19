@@ -7,4 +7,4 @@ One can find additional functions important for the models to train, the data to
 ![](Vae_mask2.png)
 
 An example of the yhat probability outputs of our trained models for Mg II h&k is presented here:
-
+![](yhat_output_example.png)
