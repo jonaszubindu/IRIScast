@@ -6,10 +6,6 @@ Created on Wed Aug  4 16:07:11 2021
 @author: jonaszbinden
 """
 import sys
-if '/sml/zbindenj/vae' not in sys.path:
-    sys.path.append('/sml/zbindenj/vae')
-if '/sml/zbindenj/features' not in sys.path:
-    sys.path.append('/home/zbindenj/features')
 import os
 
 from astropy import constants as c
@@ -31,7 +27,7 @@ from sunpy.timeseries import TimeSeries
 import sunpy.io
 from sunpy import log
 from sunpy.io.file_tools import UnrecognizedFileTypeError
-from sunpy.time import is_time_in_given_format, parse_time
+from sunpy.time import parse_time
 from sunpy.timeseries.timeseriesbase import GenericTimeSeries
 from sunpy.util.metadata import MetaDict
 from sunpy.visualization import peek_show
@@ -40,10 +36,6 @@ import torch
 import pickle
 import numpy as np
 import pandas as pd
-
-# from dask import delayed
-# import dask.array as da
-# import dask.dataframe as dd
 
 import torch.nn as nn
 import torch.optim as optim
@@ -59,7 +51,6 @@ from sklearn import preprocessing
 import astroscrappy
 from sunpy.coordinates.sun import earth_distance
 
-# import datetime
 from datetime import datetime, timedelta, time
 from warnings import warn
 from utils_features import *
@@ -167,35 +158,15 @@ def clean_pre_interpol(X, threshold, mode='zeros'):
     dump = np.zeros(X.shape)
     dump[w] = 1
     s =  np.sum(dump, axis = -1)
-#     len(X[X.clip(min=10)>10])
     if mode == 'zeros':
 
-#         spectra_quick_look(X, 1399.5, 1403.8, 344)
         X[np.where(np.all(X  < threshold, axis=-1))] = np.full((1, X.shape[-1]), fill_value = 0)
-#         spectra_quick_look(X, 1399.5, 1403.8, 344)
-#         keep = []
-#         for elem in set(np.where(X.clip(min=10) > 10)[0]):
-#             if list(np.where(X.clip(min=10) > 10)[0]).count(elem)>3:
-#                 keep.append(elem)
-#         inds = [ind for ind in range(X.shape[0]) if ind not in keep]
-#         X[inds] = np.full((1, X.shape[-1]), fill_value = 0) # puts everything to 0 which has not minimum 3 points above
-                                                            # threshold
         X[np.logical_or(neg <= -100, s >=3)] = np.full((1, X.shape[-1]), fill_value = 0)
 
-#         X[np.where(neg <= -100)] = np.full((1, X.shape[-1]), fill_value = 0) # change in how to clean spectra for special
-                                                                             # processing
-
-#         Y1[np.logical_and(neg > -100, s < 10)] = np.full((1, X.shape[-1]), fill_value = 0)
-#         Y1 = Y1[~np.all(Y1 == 0, axis=-1)]
-#         Y2[np.where(np.any(X >= threshold, axis=-1))] = np.full((1, X.shape[-1]), fill_value = 0)
-#         Y2[keep] = np.full((1, X.shape[-1]), fill_value = 0)
-#         Y2 = Y2[~np.all(Y2 == 0, axis=-1)]
-
     if mode == 'del':
-        X = np.delete(X, np.concatenate((np.where(neg <= -100)[0], np.where(s>=3)[0])), axis=0) # needs major updating if this is ever used
+        X = np.delete(X, np.concatenate((np.where(neg <= -100)[0], np.where(s>=3)[0])), axis=0) # probably needs updating if this is ever used
 
-#     Y = np.vstack([Y1, Y2])
-    return X#, Y
+    return X
 
 
 def clean_aft_interpol(X, mode='del'):
@@ -204,10 +175,13 @@ def clean_aft_interpol(X, mode='del'):
     This cleaning process is used to reject spectra with cosmic rays and abnormal peak ratio. This needs to be updated when other
     lines will be processed.
 
-    input  - X: matrix (example, feature)
+    input  - X: np.array (example, feature)
            - modes:
                1) 'ones' -> replaces bad profiles with a vector of ones
                2) 'nans' -> replaces bad profiles with a vector of nan's
+
+    returns X : np.array(example, feature) with masked spectra according to the after interpolation cleaning rules
+               Y : np.array(rule, example, feature) contains the masks according to the different rules. This is only used for testing if the masks work correctly
 
     """
     try:
@@ -273,13 +247,11 @@ def clean_aft_interpol(X, mode='del'):
 
         X = np.delete(X, del_inds.astype(int), axis=0)
 
-#     print(X, Y3, Y4, Y5)
     if (np.all(Y3 == X) and np.all(Y4 == X)) or mode == 'del':
         Y = []
     else:
         Y = np.vstack([Y3, Y4, Y5])
 
-#     print("func called!")
     return X, Y
 
 
@@ -330,8 +302,6 @@ def spectra_quick_look(spectra, lambda_min=None, lambda_max=None, n_breaks=None,
         if ind012:
             spectra = spectra[ind012, :]
         else:
-#             inds_greate_0 = np.where(np.any(spectra>0, axis=-1))
-#             spectra = spectra[inds_greate_0]
             ind_select = np.random.randint(0, spectra.shape[0], size=dim*dim) # low >= high outputted
             spectra = spectra[ind_select,:]
 
@@ -350,48 +320,11 @@ def spectra_quick_look(spectra, lambda_min=None, lambda_max=None, n_breaks=None,
                 plt.xticks(fontsize=16, color='red')
                 plt.yticks(fontsize=16, color='red')
 
-                #plt.legend()
         plt.show()
 
     return ind012
 
 ##########################################################################################
-
-def wait_for_enter(msg='Press ENTER to continue.'):
-    """
-    misc.wait_for_enter(msg='Press ENTER to continue.')
-
-    Print a message and wait until the user presses the ENTER key.
-
-    INPUT:
-    msg (optional): message
-
-    OUTPUT:
-    (none)
-    """
-
-    print ('\a') # get user attention using the terminal bell
-
-    input(msg)
-
-def ask_for_value(msg='Enter value = '):
-    """
-    x = misc.ask_for_value(msg='Enter value = ')
-
-    Print a message asking the user to enter something, wait until the user presses the ENTER key, and return the value.
-
-    INPUT:
-    msg (optional): message
-
-    OUTPUT:
-    x: user value (string)
-    """
-
-    print ('\a') # get user attention using the terminal bell
-
-    x = input(msg)
-
-    return x
 
 # def time_clipping_no_flare(raster, minutes = 60, raster_pos = 0, num_of_partitions_max = 10):
 
@@ -473,7 +406,31 @@ def Lazy_Balance(num_PF, num_AR):
 
 def interpolate_spectra(spectra_stats_single_obs, raster, lambda_min, lambda_max, field, line, n_breaks, threshold, calib = True):
 
+    """
+    This function interpolates the spectra onto a common, predefined wavelength grid, and applies the pre interpol and aft interpol maskings. It also normalized the spectra and removes cosmic rays with an automated cosmic ray detection technique from astroscrappy. It also tracks the statistics how many spectra are masked/removed in each step.
 
+    Inputs:
+        spectra_stats_single_obs : dict, tracks the statistics about the masked spectra in each step.
+
+        raster : object (irisreader), raster containing the raw spectra from irisreader.
+
+        lambda_min : float, minimum wavelength to interpolate on.
+
+        lambda_max : float, maximum wavelength to interpolate on.
+
+        field : str, if 'NUV' or 'FUV'
+
+        line : str, spectral line,
+
+        n_breaks : int, number of points to interpolate on.
+
+        threshold : int, float, minimum DN/s intensity to keep spectrum (get rid of low-signal/noisy spectra).
+
+        calib : bool, if the spectra should be calibrated to physical units.
+
+
+
+    """
 
     hdrs = raster.headers
 
@@ -650,11 +607,7 @@ def transform_arrays(times, image_arr=None, norm_vals_arr=None, num_of_raster_po
 
     if forward:
 
-#     if num_of_raster_pos == 1:
-#         image_arr_r = image_arr
-#         times_r = times
-#         norm_vals_r = norm_vals_arr
-#     else:
+
         image_arr_r = image_arr.reshape(image_arr.shape[0]*image_arr.shape[1], image_arr.shape[2], image_arr.shape[3],
                                         order='F')
         times_r = times.reshape(times.shape[0]*times.shape[1], 1, order='F')
@@ -789,22 +742,6 @@ def transform_arrays(times, image_arr=None, norm_vals_arr=None, num_of_raster_po
                 times_r = times.reshape(int(times.shape[0]/num_of_raster_pos), num_of_raster_pos).transpose(1,0).reshape(num_of_raster_pos, int(times.shape[0]/num_of_raster_pos))
 
                 norm_vals_r = norm_vals_arr.reshape(int(norm_vals_arr.shape[0]/num_of_raster_pos), num_of_raster_pos, norm_vals_arr.shape[1],1).transpose(1,0,2,3).reshape(num_of_raster_pos, int(norm_vals_arr.shape[0]/num_of_raster_pos), norm_vals_arr.shape[1],1)
-
-#             print(int(times_origin[n][0]))
-
-            # check_diff_1 = [times_r[int(times_origin[0][n]),0] - times_r[int(times_origin[0][0]),0] for n in range(num_of_raster_pos-1)]
-
-#             if times_r.shape[1] > 1:
-#                 check_diff_2 = times_r[int(times_origin[0][0]),0] - times_r[int(times_origin[0][0]),1]
-#             else:
-#                 check_diff_2 = check_diff_1[0]
-
-#             if (np.argmin(check_diff_1) != int(times_origin[0][0])) | np.any(check_diff_2 < check_diff_1[0]):
-#                 print(np.argmin(check_diff_1), (check_diff_2 < check_diff_1[0]))
-#                 print(f"n={int(times_origin[0][0])}, t=0 :", times_r[int(times_origin[0][0]),0], f"n={int(times_origin[0][0])}+1, t=0 :", times_r[int(times_origin[0][0])+1,0], f"n={int(times_origin[0][0])}, t=1 :", times_r[int(times_origin[0][0]),1])
-#                 raise Warning('could not reshape times, times are not in the correct order!')
-#             else:
-#                 pass
 
     return times_r, image_arr_r, norm_vals_r
 
@@ -1059,21 +996,12 @@ class Obs_raw_data:
             self.threshold = threshold
             self.spectra_stats_single_obs = {}
 
-#             interpolated_image_arr = np.zeros([raster.n_raster_pos, raster.get_raster_pos_steps(0), raster.shape[1], n_breaks])
-#             norm_val_image_arr = np.zeros([raster.n_raster_pos, raster.get_raster_pos_steps(0), raster.shape[1], 1])
 
             interpolated_image_clean_norm, norm_val_image, spectra_stats_single_obs = interpolate_spectra(self.spectra_stats_single_obs, raster, lambda_min, lambda_max, field, line, n_breaks, threshold, calib = True)
 
             self.spectra_stats_single_obs = spectra_stats_single_obs
 
-#             interpolated_image_arr[n_rast,:,:,:] = interpolated_image_clean_norm
-
-#             norm_val_image_arr[n_rast,:,:] = norm_val_image
-
             self.hdrs = pd.DataFrame(list(raster.headers))
-#             self.im_arr = interpolated_image_arr
-#             self.norm_vals = norm_val_image_arr
-
 
             # transforms image to global raster step
             times_global, _, _ = transform_arrays(times, num_of_raster_pos=raster.n_raster_pos, forward = True)
@@ -1209,11 +1137,6 @@ class Obs_raw_data:
             f.close()
 
 
-#         da.to_npy_stack(f'/sml/zbindenj/{line}/{typ}/{filename}_im_arr_global.npy', da.from_array(self.im_arr_global, chunks=('auto', 'auto',-1)))
-#         da.to_npy_stack(f'/sml/zbindenj/{line}/{typ}/{filename}_times_global.npy', da.from_array(self.times_global, chunks=(-1,'auto')))
-#         da.to_npy_stack(f'/sml/zbindenj/{line}/{typ}/{filename}_norm_vals_global.npy', da.from_array(self.norm_vals_global, chunks=('auto', 'auto',-1)))
-
-
 ##########################################################################################
 
 def load_obs_data(filename, line, typ, only_im_arr = False):
@@ -1246,362 +1169,12 @@ def load_obs_data(filename, line, typ, only_im_arr = False):
 
         return Obs_raw_data(load_dict=load_dict)
 
-
-def load_obs_data_old(filename, line, typ):
-    filename = filename.split('.')[0]
-    try:
-        obs_data = np.load(f'/sml/zbindenj/{line}/{typ}/{filename}.npz', allow_pickle = True)['arr_0'].item()
-    except Exception:
-        obs_data = torch.load(f'/sml/zbindenj/{line}/{typ}/{filename}.pt')
-    return obs_data
-
-# def load_obs_data_cleaned(filename, line, typ):
-#     filename = filename.split('.')[0]
-
-#     if line == 'MgIIk':
-#         try:
-#             obs_data = np.load(f'/sml/zbindenj/cleaned/{line}/{typ}/{filename}.npz', allow_pickle = True)['arr_0'].item()
-#         except Exception:
-#             obs_data = torch.load(f'/sml/zbindenj/cleaned/{line}/{typ}/{filename}.pt')
-#         return obs_data
-#     else:
-#         return load_obs_data(filename, line, typ)
-
-class Dataset_VAE(torch.utils.data.Dataset):
-  'Characterizes a dataset for PyTorch'
-  def __init__(self, X, labels):
-        'Initialization'
-        self.labels = labels
-        #self.list_IDs = list_IDs
-        self.X_data = X #filehandlers
-
-  def __len__(self):
-        'Denotes the total number of samples'
-        return len(self.labels)
-
-  def __getitem__(self, index):
-        'Generates one sample of data'
-        # Select sample
-        #ID = self.list_IDs[index]
-
-        #x = self.X_data[ID]
-        #y = self.labels[ID]
-        x = self.X_data[index]
-        y = self.labels[index]
-        return x, y
-
-class Dataset_NN(torch.utils.data.Dataset):
-  'Characterizes a dataset for PyTorch'
-  def __init__(self, label_file_IDs, label_indexs, y_labels, path_to_data):
-        'Initialization'
-        self.labels = y_labels # 0's and 1's
-        self.label_file_IDs = label_file_IDs
-        self.label_indexs = label_indexs
-        self.path_to_data = path_to_data
-#         self.filehandler = {}
-
-  def __len__(self):
-        'Denotes the total number of samples'
-        return len(self.labels)
-
-  def __getitem__(self, index):
-        'Generates one sample of data'
-        # Select sample
-        file_label = self.label_file_IDs[index]
-        arr_ind = self.label_indexs[index]
-        with h5py.File(self.path_to_data + file_label, 'r') as f:
-            x = f["im_arr_global"][arr_ind]#.clip(min=0)
-            y = self.labels[index]
-        return x, y
-
-class Dataset_NN_intensity(torch.utils.data.Dataset):
-  'Characterizes a dataset for PyTorch'
-  def __init__(self, label_file_IDs, label_indexs, y_labels, path_to_data):
-        'Initialization'
-        self.labels = y_labels # 0's and 1's
-        self.label_file_IDs = label_file_IDs
-        self.label_indexs = label_indexs
-        self.path_to_data = path_to_data
-#         self.filehandler = {}
-
-  def __len__(self):
-        'Denotes the total number of samples'
-        return len(self.labels)
-
-  def __getitem__(self, index):
-        'Generates one sample of data'
-        # Select sample
-        file_label = self.label_file_IDs[index]
-        arr_ind = self.label_indexs[index]
-        with h5py.File(self.path_to_data + file_label, 'r') as f:
-            x = f["im_arr_global"][arr_ind]
-            x_i = f["norm_vals_global"][arr_ind]
-            X = np.concatenate([x, x_i], axis=-1)
-            y = self.labels[index]
-        return X, y
-
 ##########################################################################################
 
 def norm_log(x, min_, max_):
     """mapping the intensity levels onto a [0,1] in a log shape"""
     x = np.log(x)
     normalized = (x-min_)/(max_-min_)
-#     normalized[np.where(np.isnan(normalized) or np.isinf(normalized))] = np.full(normalized.shape, fill_value=0)
     return normalized
 
 ##########################################################################################
-
-
-class SingleLayer(nn.Module):
-    def __init__(self, input_dim, d_in2):
-        super(SingleLayer, self).__init__()
-
-        self.fc1 = nn.Linear(input_dim, d_in2)
-
-        self.bc1 = nn.BatchNorm1d(d_in2)
-
-        self.fc2 = nn.Linear(d_in2, 1)
-
-        self.dropout = nn.Dropout(0.3)
-
-    def forward(self, x):
-
-        x = self.dropout(x)
-
-        x = F.relu(self.bc1(self.fc1(x)))
-
-#         x = F.relu(self.fc1(x))
-
-        return F.sigmoid(self.fc2(x))
-
-class TwoLayers(nn.Module):
-    def __init__(self, input_dim, d_in2, d_in3):
-        super(TwoLayers, self).__init__()
-
-        self.fc1 = nn.Linear(input_dim, d_in2)
-
-        self.bc1 = nn.BatchNorm1d(d_in2)
-
-        self.fc2 = nn.Linear(d_in2, d_in3)
-
-        self.bc2 = nn.BatchNorm1d(d_in3)
-
-        self.fc3 = nn.Linear(d_in3, 1)
-
-        self.dropout1 = nn.Dropout(0.3)
-
-        self.dropout2 = nn.Dropout(0.3)
-
-    def forward(self, x):
-
-        x = self.dropout1(x)
-
-        x = F.relu(self.bc1(self.fc1(x)))
-
-        x = self.dropout2(x)
-
-        x = F.relu(self.bc2(self.fc2(x)))
-
-#         x = F.relu(self.fc1(x))
-
-#         x = F.relu(self.fc2(x))
-
-        return F.sigmoid(self.fc3(x))
-
-class ThreeLayers(nn.Module):
-    def __init__(self, input_dim, d_in2, d_in3, d_in4):
-        super(ThreeLayers, self).__init__()
-
-        self.fc1 = nn.Linear(input_dim, d_in2)
-
-        self.bc1 = nn.BatchNorm1d(d_in2)
-
-        self.fc2 = nn.Linear(d_in2, d_in3)
-
-        self.bc2 = nn.BatchNorm1d(d_in3)
-
-        self.fc3 = nn.Linear(d_in3, d_in4)
-
-        self.bc3 = nn.BatchNorm1d(d_in4)
-
-        self.fc4 = nn.Linear(d_in4, 1)
-
-        self.dropout1 = nn.Dropout(0.3)
-        self.dropout2 = nn.Dropout(0.3)
-        self.dropout3 = nn.Dropout(0.3)
-
-    def forward(self, x):
-
-        x = self.dropout1(x)
-
-        x = F.relu(self.bc1(self.fc1(x)))
-
-        x = self.dropout2(x)
-
-        x = F.relu(self.bc2(self.fc2(x)))
-
-        x = self.dropout3(x)
-
-        x = F.relu(self.bc3(self.fc3(x)))
-
-#         x = F.relu(self.fc1(x))
-
-#         x = F.relu(self.fc2(x))
-
-#         x = F.relu(self.fc3(x))
-
-        return F.sigmoid(self.fc4(x))
-
-
-class ConvNet(nn.Module):
-    def __init__(self, input_dim, d_in2):
-        super(ConvNet, self).__init__()
-
-        self.conv1 = nn.Sequential(
-           nn.Conv1d(1, 2, kernel_size=20, stride=4, padding=4),
-           nn.ReLU(True))
-
-        self.conv2 = nn.Sequential(
-           nn.Conv1d(2, 4, kernel_size=16, stride=3, padding=4),
-           nn.ReLU(True))
-
-        self.fc1 = nn.Linear(4*44, d_in2)
-
-        self.bc1 = nn.BatchNorm1d(d_in2)
-
-        self.fc2 = nn.Linear(d_in2, 1)
-
-        self.dropout = nn.Dropout(0.3)
-
-    def forward(self, x):
-        x = x.view(-1,1, x.shape[-1])
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = torch.flatten(x, 1)
-        x = self.dropout(x)
-        x = F.relu(self.bc1(self.fc1(x)))
-#         x = F.relu(self.fc1(x))
-
-#         x = F.relu(self.fc2(x))
-
-        return F.sigmoid(self.fc2(x))
-
-class VGG(nn.Module):
-    def __init__(self, input_dim):
-        super(VGG, self).__init__()
-
-        self.conv1 = nn.Sequential(
-           nn.Conv1d(1, 32, kernel_size=4, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.conv2 = nn.Sequential(
-           nn.Conv1d(32, 32, kernel_size=4, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.maxpol1 = nn.MaxPool1d(kernel_size=2, stride=2)
-
-        self.conv3 = nn.Sequential(
-           nn.Conv1d(32, 64, kernel_size=4, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.conv4 = nn.Sequential(
-           nn.Conv1d(64, 64, kernel_size=4, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.maxpol2 = nn.MaxPool1d(kernel_size=2, stride=2)
-
-        self.conv5 = nn.Sequential(
-           nn.Conv1d(64, 128, kernel_size=4, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.conv6 = nn.Sequential(
-           nn.Conv1d(128, 128, kernel_size=4, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.maxpol3 = nn.MaxPool1d(kernel_size=2, stride=2)
-
-        self.conv7 = nn.Sequential(
-           nn.Conv1d(128, 256, kernel_size=3, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.conv8 = nn.Sequential(
-           nn.Conv1d(256, 256, kernel_size=3, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.maxpol4 = nn.MaxPool1d(kernel_size=2, stride=2)
-
-        self.conv9 = nn.Sequential(
-           nn.Conv1d(256, 512, kernel_size=3, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.conv10 = nn.Sequential(
-           nn.Conv1d(512, 512, kernel_size=3, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.maxpol5 = nn.MaxPool1d(kernel_size=2, stride=2)
-
-        self.conv11 = nn.Sequential(
-           nn.Conv1d(512, 1024, kernel_size=3, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.conv12 = nn.Sequential(
-           nn.Conv1d(1024, 1024, kernel_size=3, stride=1, padding=1),
-           nn.ReLU(True))
-
-        self.maxpol6 = nn.MaxPool1d(kernel_size=2, stride=2)
-
-        self.dropout1 = nn.Dropout(0.2)
-
-        self.fc1 = nn.Linear(1024*10, 100)
-
-        self.bc1 = nn.BatchNorm1d(100)
-
-        self.dropout2 = nn.Dropout(0.2)
-
-        self.fc2 = nn.Linear(100, 1)
-
-#         self.bc2 = nn.BatchNorm1d(1024)
-
-#         self.fc3 = nn.Linear(1024, 128)
-
-#         self.bc3 = nn.BatchNorm1d(128)
-
-    def forward(self, x):
-        x = x.view(-1,1, x.shape[-1])
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.maxpol1(x)
-
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.maxpol2(x)
-
-        x = self.conv5(x)
-        x = self.conv6(x)
-        x = self.maxpol3(x)
-
-        x = self.conv7(x)
-        x = self.conv8(x)
-        x = self.maxpol4(x)
-
-        x = self.conv9(x)
-        x = self.conv10(x)
-        x = self.maxpol5(x)
-
-        x = self.conv11(x)
-        x = self.conv12(x)
-        x = self.maxpol6(x)
-
-        x = torch.flatten(x, 1)
-        x = self.dropout1(x)
-        x = F.relu(self.bc1(self.fc1(x)))
-        x = self.dropout2(x)
-#         x = F.relu(self.fc2(x))
-
-#         x = F.relu(self.fc2(x))
-
-        return F.sigmoid(self.fc2(x))
-
-
-
-

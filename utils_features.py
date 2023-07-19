@@ -1,7 +1,10 @@
+"""Adopted from Brandon Panos and modified for the present study"""
+
+
 import numpy as np
 import pandas as pd
 from copy import deepcopy
-# import utils
+
 
 from scipy.optimize import curve_fit
 from scipy import asarray as ar,exp
@@ -13,10 +16,10 @@ def NCDFs(nprof):
     '''
     Transforms spectra into normalized cumulative distribution functions
     independent of line type (sensitive to noise?)
-    Input: 
+    Input:
     ------
     nprof --> numpy array; (i, wavelength)
-    
+
     Output:
     -------
     ncdfs --> numpy array; (i, wavelength) of normalized cumulative distribution functions
@@ -48,7 +51,7 @@ def quartiles(ncdfs):
 
 #---------------Line parameters------------------
 
-n_bins = 240 
+n_bins = 240
 lambda_min = 2794
 lambda_max = 2806
 window = 60
@@ -62,7 +65,7 @@ kr = int(k + window/2)
 hl =  int(h - window/2)
 hr = int(h + window/2)
 
-line_parameters['Mg II k'] = {'n_bins' : n_bins, 
+line_parameters['Mg II k'] = {'n_bins' : n_bins,
                               'lambda_min' : lambda_min,
                               'lambda_max' : lambda_max,
                               'xax' : xax,
@@ -75,7 +78,7 @@ line_parameters['Mg II k'] = {'n_bins' : n_bins,
                               'kr' : kr,
                               'hl' : hl,
                               'hr' : hr,
-                              'k2l' : np.abs( (core_1-1) - xax ).argmin(), 
+                              'k2l' : np.abs( (core_1-1) - xax ).argmin(),
                               'k2r' : np.abs( (core_1+1) - xax ).argmin(),
                               'sm' : np.abs( 2798.77  - xax ).argmin(),
                               'wing' : np.abs( 2799.32 - xax ).argmin()
@@ -89,7 +92,7 @@ def peak_locs_MgIIk(prof):
     Find k2v, k2r, and k3 locations and produces three features
     Input:
     ------
-    prof --> numpy array; single spectrum (wavelength,) 
+    prof --> numpy array; single spectrum (wavelength,)
     Output:
     -------
     k3_h --> hight of the central dip of a normalized profile
@@ -101,7 +104,7 @@ def peak_locs_MgIIk(prof):
     lambda_min = line_parameters['Mg II k']['lambda_min']
     lambda_max = line_parameters['Mg II k']['lambda_max']
     n_bins = line_parameters['Mg II k']['n_bins']
-    
+
     k = line_parameters['Mg II k']['k']
     kl = line_parameters['Mg II k']['kl']
     kr = line_parameters['Mg II k']['kr']
@@ -127,7 +130,7 @@ def peak_locs_MgIIk(prof):
         except:
             p2 = p1
             k3 = p2
-    if p1 > k:        
+    if p1 > k:
         grads = np.gradient(prof[k2l:p1])
         grads = -np.flip(grads)
         xs = np.arange(k2l,p1)
@@ -179,7 +182,7 @@ def peak_locs_MgIIk(prof):
 
 def doppler_weight_MgIIk(nprof, qrt):
     '''
-    
+
     Input:
     ------
     nprof --> numpy array; (i, wavelength)
@@ -190,24 +193,18 @@ def doppler_weight_MgIIk(nprof, qrt):
                 doppler < 0 --> blue shift (upflow)
                 doppler = 0 --> symmetric, atleased to first moment
     '''
-    
+
     lambda_min = line_parameters['Mg II k']['lambda_min']
     lambda_max = line_parameters['Mg II k']['lambda_max']
     n_bins = line_parameters['Mg II k']['n_bins']
 
     lambda_units = np.linspace( lambda_min, lambda_max, num=n_bins )
-    
-#     K = []
-#     for prof in nprof:
-#         k3 = peak_locs_MgIIk(prof)
-#         K.append(lambda_units[k3])
-#     K = np.vstack(K)    
-#     doppler = (K - line_parameters['Mg II k']['core_1'])/line_parameters['Mg II k']['core_1']*3E+5
-    
-    
+
     doppler = -(lambda_max-lambda_min)/(n_bins-1)*((int((kr-kl)/2)-qrt[:,1]))/line_parameters['Mg II k']['core_1']*3E+5
-    
+
     return doppler # in km/s
+
+
 
 def peak_stats_MgIIk(nprof):
     '''
@@ -219,31 +216,23 @@ def peak_stats_MgIIk(nprof):
     -------
     k3_h, peak_ratios, peak_separation as above but for an entire array
     '''
-    
+
     k3_h_list = []
     peak_ratios_list= []
     peak_separation_list = []
-#     k2vio_list = []
-#     k2red_list = []
-#     k3_list = []
-    # , k2vio, k2red, k3
+
     for prof in nprof:
         k3_h, peak_ratios, peak_separation = peak_locs_MgIIk(prof)
         k3_h_list.append(k3_h)
         peak_ratios_list.append(peak_ratios)
         peak_separation_list.append(peak_separation)
-#         k2vio_list.append(k2vio)
-#         k2red_list.append(k2red)
-#         k3_list.append(k3)
-        
+
     k3_h = np.asarray(k3_h_list)
     peak_ratios = np.asarray(peak_ratios_list)
     peak_separation = np.asarray(peak_separation_list)
-#     k2vio = np.asarray(k2vio_list)
-#     k2red = np.asarray(k2red_list)
-#     k3 = np.asarray(k3_list)
-    
-    return k3_h, peak_ratios, peak_separation#, k2vio, k2red, k3
+
+    return k3_h, peak_ratios, peak_separation
+
 
 def extract_features_MgIIk(nprof, save_path='/data1/userspace/bpanos/XAI/data/df_features.csv'):
     '''
@@ -261,20 +250,20 @@ def extract_features_MgIIk(nprof, save_path='/data1/userspace/bpanos/XAI/data/df
     lambda_min = line_parameters['Mg II k']['lambda_min']
     lambda_max = line_parameters['Mg II k']['lambda_max']
     n_bins = line_parameters['Mg II k']['n_bins']
-    
+
     lambda_units = np.linspace( lambda_min, lambda_max, num=n_bins )
-    
+
     k = line_parameters['Mg II k']['k']
     kl = line_parameters['Mg II k']['kl']
     kr = line_parameters['Mg II k']['kr']
-    
+
     h = line_parameters['Mg II k']['h']
     hl = line_parameters['Mg II k']['hl']
     hr = line_parameters['Mg II k']['hr']
-    
+
     sm = line_parameters['Mg II k']['sm']
     wing = line_parameters['Mg II k']['wing']
-    
+
     #-------------quartiles---------------
     #(Only for the k-core)
     ncdfs = NCDFs(nprof[:,kl:kr])
@@ -282,7 +271,7 @@ def extract_features_MgIIk(nprof, save_path='/data1/userspace/bpanos/XAI/data/df
     center_mass = -(int((kr-kl)/2)-qrt[:,1])
     center_mass = lambda_units[center_mass+k]
     line_width = (lambda_max-lambda_min)/(n_bins-1)*(qrt[:,2] - qrt[:,0])
-    line_asymmetry = (lambda_max-lambda_min)/(n_bins-1)*( (qrt[:,2]-qrt[:,1])-(qrt[:,1]-qrt[:,0]) ) 
+    line_asymmetry = (lambda_max-lambda_min)/(n_bins-1)*( (qrt[:,2]-qrt[:,1])-(qrt[:,1]-qrt[:,0]) )
     #------------doppler asymmetry---------
     #(Only for the k-core)
     doppler = doppler_weight_MgIIk(nprof, qrt)
@@ -301,14 +290,14 @@ def extract_features_MgIIk(nprof, save_path='/data1/userspace/bpanos/XAI/data/df
     intensity = np.max( nprof, axis=1 )
     #Turn feature into a pandas DataFrame and save to a CSV file
     feature_names = ['center_mass', 'line_width', 'line_asymmetry', 'doppler', 'trip_emiss', 'kh_ratio', 'k3_h', 'peak_ratios', 'peak_separation', 'total_continuum']
-#     ['center_mass', 'line_width', 'line_asymmetry', 'doppler', 'k3_h', 'peak_ratios', 'peak_separation', 'intensity']
+
     feature_list  = [center_mass, line_width, line_asymmetry, doppler, trip_emiss, kh_ratio, k3_h, peak_ratios, peak_separation, total_continuum]
     feature_mat = np.vstack(feature_list).T
     feature_mat = np.round(feature_mat,3)
     df_features = pd.DataFrame(feature_mat, columns=feature_names)
     if save_path:
         df_features.to_csv(save_path, sep='\t')
-    return df_features#, k2vio, k2red, k3
+    return df_features
 
 
 
