@@ -8,4 +8,5 @@ One can find additional functions important for the models to train, the data to
 
 An example of the yhat probability outputs of our trained models for Mg II h&k is presented here:
 <img src="yhat_output_example.png" alt="" width="400" height="300">
+
 The required libraries to run the notebooks are in requirements.txt and can be installed with pip install -r requirements.txt
