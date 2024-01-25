@@ -5,59 +5,15 @@ Created on Wed Aug  4 16:07:11 2021
 
 @author: jonaszbinden
 """
-import sys
-import os
-
-from astropy import constants as c
-
-
-from irisreader import observation, raster_cube
-from irisreader.utils.date import to_epoch
-from irisreader.utils.date import from_Tformat
-
-import irispy
-
-import irisreader as ir
-
-import astropy.units as u
-from astropy.time import Time, TimeDelta
-from sunpy.net import Fido
-from sunpy.net import attrs as a
-from sunpy.timeseries import TimeSeries
-import sunpy.io
-from sunpy import log
-from sunpy.io.file_tools import UnrecognizedFileTypeError
-from sunpy.time import is_time_in_given_format, parse_time
-from sunpy.timeseries.timeseriesbase import GenericTimeSeries
-from sunpy.util.metadata import MetaDict
-from sunpy.visualization import peek_show
-from tqdm import tqdm
 import torch
-import pickle
-import numpy as np
-import pandas as pd
 
 import torch.nn as nn
-import torch.optim as optim
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
-import matplotlib.pyplot as plt
-import matplotlib
-import matplotlib.ticker as mticker
 import torch.nn.functional as F
-import torchvision.transforms as T
-from scipy.interpolate import interp1d
-from sklearn import preprocessing
-import astroscrappy
-from sunpy.coordinates.sun import earth_distance
 
-# import datetime
-from datetime import datetime, timedelta, time
-from warnings import warn
 from utils_features import *
 import h5py
-import gc
-from astropy import constants as c
 from copy import deepcopy
 
 import autoencoder_MgIIk as autoencoder
@@ -65,6 +21,7 @@ import autoencoder_MgIIk as autoencoder
 import importlib
 
 importlib.reload(autoencoder)
+
 
 
 #########################################################################################################################
