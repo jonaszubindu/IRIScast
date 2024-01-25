@@ -5,63 +5,32 @@ Created on Wed Aug  4 16:07:11 2021
 
 @author: jonaszbinden
 """
-import sys
 import os
 
 from astropy import constants as c
 
 
-from irisreader import observation, raster_cube
 from irisreader.utils.date import to_epoch
 from irisreader.utils.date import from_Tformat
 
-from irispy.utils import get_interpolated_effective_area
-
-import irisreader as ir
-
 import astropy.units as u
-from astropy.time import Time, TimeDelta
 from sunpy.net import Fido
 from sunpy.net import attrs as a
 from sunpy.timeseries import TimeSeries
-import sunpy.io
-from sunpy import log
-from sunpy.io.file_tools import UnrecognizedFileTypeError
 from sunpy.time import parse_time
-from sunpy.timeseries.timeseriesbase import GenericTimeSeries
-from sunpy.util.metadata import MetaDict
-from sunpy.visualization import peek_show
-from tqdm import tqdm
-import torch
-import pickle
 import numpy as np
-import pandas as pd
 
-import torch.nn as nn
-import torch.optim as optim
-import torch.multiprocessing
-torch.multiprocessing.set_sharing_strategy('file_system')
 import matplotlib.pyplot as plt
 import matplotlib
 import matplotlib.ticker as mticker
-import torch.nn.functional as F
-import torchvision.transforms as T
-from scipy.interpolate import interp1d
-from sklearn import preprocessing
-import astroscrappy
-from sunpy.coordinates.sun import earth_distance
 
-from datetime import datetime, timedelta, time
+from datetime import timedelta
 from warnings import warn
 from utils_features import *
 import h5py
-import gc
+
 from astropy import constants as c
-import logging
 
-import vae
-
-import importlib
 
 DN2PHOT = {'NUV':18/(u.pixel), 'FUV': 4/(u.pixel)}
 
@@ -127,248 +96,9 @@ def time_cut( obs, flare=True, length_minutes=30 ):
     delta_t = from_Tformat( headers[stop]['DATE_OBS'] ) - from_Tformat( headers[start]['DATE_OBS'] )
     return [start, stop, delta_t.seconds/60]
 
-
-def clean_pre_interpol(X, threshold, mode='zeros'):
-    '''
-    X must have shape (some value, n_breaks)
-    clean profiles which meet the following criterion:
-        - Negative values -> condition = profile with any value <= -100
-        - Noisy -> condition = profile with maximum <= 10 before normalizing
-        - Overexposure -> condition = more than 3 points == max
-
-
-    input  - X: matrix (example, feature)
-           - modes:
-               1) 'ones' -> replaces bad profiles with a vector of ones
-               2) 'nans' -> replaces bad profiles with a vector of nan's
-               3) 'del' -> deletes bad profiles (this changes dimentional structure, but usefull for unsupervised)
-    '''
-
-    Y1 = np.copy(X) # keeps rejected spectra for checking
-    Y2 = np.copy(X) # keeps rejected spectra for checking
-
-    # Clean profiles with negative
-    neg = np.min(X, axis=-1)
-    #Clean profiles with too little signal
-    small = np.max(X, axis=-1)
-    # Clean overexposed profiles
-    maxx = np.max(X, axis=-1).reshape(small.shape + (1,))
-    diff = (X-maxx)
-    w = np.where(diff == 0)
-    dump = np.zeros(X.shape)
-    dump[w] = 1
-    s =  np.sum(dump, axis = -1)
-    if mode == 'zeros':
-
-        X[np.where(np.all(X  < threshold, axis=-1))] = np.full((1, X.shape[-1]), fill_value = 0)
-        X[np.logical_or(neg <= -100, s >=3)] = np.full((1, X.shape[-1]), fill_value = 0)
-
-    if mode == 'del':
-        X = np.delete(X, np.concatenate((np.where(neg <= -100)[0], np.where(s>=3)[0])), axis=0) # probably needs updating if this is ever used
-
-    return X
-
-
-def clean_aft_interpol(X, mode='del'):
-
-    """
-    This cleaning process is used to reject spectra with cosmic rays and abnormal peak ratio. This needs to be updated when other
-    lines will be processed.
-
-    input  - X: np.array (example, feature)
-           - modes:
-               1) 'ones' -> replaces bad profiles with a vector of ones
-               2) 'nans' -> replaces bad profiles with a vector of nan's
-
-    returns X : np.array(example, feature) with masked spectra according to the after interpolation cleaning rules
-               Y : np.array(rule, example, feature) contains the masks according to the different rules. This is only used for testing if the masks work correctly
-
-    """
-    try:
-        X = X/X.unit
-    except Exception:
-        pass
-
-    Y3 = np.copy(X) # keeps rejected spectra for checking
-    Y4 = np.copy(X) # keeps rejected spectra for checking
-    Y5 = np.copy(X) # keeps rejected spectra for checking
-
-    # Reject spectra outside of peak ratio [1:1, 2:1]
-    df_features = extract_features_MgIIk(X, save_path=None)
-    inds = df_features.index[(df_features['kh_ratio'] < .8) | (df_features['kh_ratio'] > 2) ] #.7 to efficiently remove noisy peaks, remove nan trip emission (only few) | (np.isnan(df_features['trip_emiss']))
-
-    # Find maximum and compare to the peak window to check if there are spikes outside of the peak window
-    maxx_ind = [np.argmax(prof) for prof in X]
-    inds_m = np.array([n for n, max_ind in enumerate(maxx_ind) if (max_ind not in np.arange(kl,kr+1,1) and max_ind not in
-                                                                   np.arange(hl,hr+1,1))])
-    #delete spectra with extreamly high pseudocontinium probably from limb obs
-    high_continuum = np.squeeze(np.argwhere(np.mean(X[:,460:500], axis=-1) > .6))
-
-
-    if mode == 'zeros':
-
-        if high_continuum.size != 0:
-            X[high_continuum] = np.full((1, X.shape[-1]), fill_value = 0)
-            if np.any(X != 0):
-                not_high_continuum = np.array([i for i in range(X.shape[0]) if i not in high_continuum])
-                if not_high_continuum.size != 0:
-                    Y3[not_high_continuum] = np.full((1, X.shape[-1]), fill_value = 0)
-                else:
-                    Y3 = Y3[~np.all(Y3 == 0, axis=1)]
-        else:
-            Y3 = np.zeros_like(X)
-
-        if inds_m.size != 0:
-            X[inds_m] = np.full((1, X.shape[-1]), fill_value = 0)
-            if np.any(X != 0):
-                not_inds_m = np.array([i for i in range(X.shape[0]) if i not in inds_m])
-                if not_inds_m.size != 0:
-                    Y4[not_inds_m] = np.full((1, X.shape[-1]), fill_value = 0)
-                else:
-                    Y4 = Y4[~np.all(Y4 == 0, axis=1)]
-        else:
-            Y4 = np.zeros_like(X)
-
-
-        if inds.size != 0:
-            X[inds] = np.full((1, X.shape[-1]), fill_value = 0)
-            if np.any(X != 0):
-                not_inds = np.array([i for i in range(X.shape[0]) if i not in inds])
-                if not_inds.size != 0:
-                    Y5[not_inds] = np.full((1, X.shape[-1]), fill_value = 0)
-                else:
-                    Y5 = Y5[~np.all(Y5 == 0, axis=1)]
-        else:
-            Y5 = np.zeros_like(X)
-
-    if mode == 'del':
-
-        del_inds = np.hstack([low_continuum, inds_m, inds])
-
-        X = np.delete(X, del_inds.astype(int), axis=0)
-
-    if (np.all(Y3 == X) and np.all(Y4 == X)) or mode == 'del':
-        Y = []
-    else:
-        Y = np.vstack([Y3, Y4, Y5])
-
-    return X, Y
-
-
-def normalize( X ):
-    '''
-    normalize each profile by its maximum
-    '''
-    maxx_u = np.max( X, axis=-1 )
-    maxx_u = maxx_u.reshape(maxx_u.shape + (1,))
-
-    try:
-        X = X/X.unit
-    except Exception:
-        pass
-    maxx = np.max( X, axis=-1 ).reshape(maxx_u.shape)
-
-    X[np.where(np.all(X == 0, axis=-1))] = np.full((1, X.shape[-1]), fill_value = 0)
-    X[np.where(np.any(X != 0, axis=-1))] = X[np.where(np.any(X != 0, axis=-1))]/maxx[np.where(np.any(X != 0, axis=-1))]
-
-
-    return X, maxx_u
-
-def minmaxnorm(X, min_, max_): # apply after standardization on all data
-    """mapping the intensity levels onto a [0,1] in a log shape"""
-    return (X-min_)/(max_-min_)
-
-
-def spectra_quick_look(spectra, lambda_min=None, lambda_max=None, n_breaks=None, dim=5, ind012 = None):
-    '''
-    plot a random sample spectral data
-    '''
-    if lambda_min:
-        lambda_units = lambda_min + np.arange(0,n_breaks)*(lambda_max-lambda_min)/n_breaks
-    else:
-        lambda_units = np.arange(0,spectra.shape[-1])
-
-    if spectra.shape[0]<=0 or spectra.shape[1]<=0:
-        warn(f'spectra can not be rendered because shapes are {spectra.shape[0]} and {spectra.shape[1]}')
-        return None
-    else:
-        if len(spectra.shape)>4:
-            spectra = np.vstack(np.vstack(np.vstack(spectra)))
-        elif len(spectra.shape)>3:
-            spectra = np.vstack(np.vstack(spectra))
-        elif len(spectra.shape)>2:
-            spectra = np.vstack(spectra)
-
-        if ind012:
-            spectra = spectra[ind012, :]
-        else:
-            ind_select = np.random.randint(0, spectra.shape[0], size=dim*dim) # low >= high outputted
-            spectra = spectra[ind_select,:]
-
-        fig = plt.figure(figsize=(36,16))
-        gs = fig.add_gridspec(dim, dim, wspace=0, hspace=0)
-        for i in range(dim):
-            for j in range(dim):
-                ind = (i*dim)+j
-                ax = fig.add_subplot(gs[i, j])
-                ax.grid(False)
-                try:
-                    plt.plot(lambda_units, spectra[ind], linewidth=1, linestyle='-', color='snow')
-                except Exception:
-                    plt.plot(spectra[ind], linewidth=1, linestyle='-', color='snow')
-                ax.set_facecolor('xkcd:black')
-                plt.xticks(fontsize=16, color='red')
-                plt.yticks(fontsize=16, color='red')
-
-        plt.show()
-
-    return ind012
-
 ##########################################################################################
 
-# def time_clipping_no_flare(raster, minutes = 60, raster_pos = 0, num_of_partitions_max = 10):
-
-#     """
-#     Computes partitions of length minutes for given slit position. The length of the partition will always be >= minutes, if the
-#     partition is sparse, this can lead to much longer windows than minutes. Partitions are only created if at least one partition
-#     fully fits within the given time window. Partitions between different slits can be highly shifted to each other.
-
-#     If no partitions were found the function returns empty lists.
-#     """
-
-#     ts = raster.get_timestamps(raster_pos = raster_pos )
-#     time_in_sec_obs = ts[-1] - ts[0]
-
-#     num_of_partitions = np.int64(np.floor(time_in_sec_obs/(minutes*60)))
-#     if num_of_partitions == 0:
-#         num_of_partitions = 1
-#     if num_of_partitions_max != None:
-#         if num_of_partitions > num_of_partitions_max:
-#             num_of_partitions = num_of_partitions_max + 1
-
-#     data_start_points = [ts[-1]-((i+1)*minutes*60) for i in range(num_of_partitions-1)]
-
-#     data_end_points = [ts[-1]-(i*minutes*60) for i in range(num_of_partitions-1)]
-
-#     diffs = [np.array(ts) - data_start_points[i] for i in range(num_of_partitions-1)]
-#     #obs_end = datetime.fromisoformat(raster.headers[0]['DATE_END'])
-#     #diffs = np.array( ts ) - to_epoch(obs_end - timedelta(minutes=minutes))
-#     raster_sweep_start = [np.argmin(np.abs( diffs[i])) for i in range(num_of_partitions-1)]
-
-#     # this will maybe not exactly be the time minutes but the time to
-#     # then it will just be the whole observation which is okay as well.
-#     # The only problem that might arise here is for an LSTM to somehow
-#     # find a common timegrid.
-
-
-#     diffs = [np.array(ts) - data_end_points[i] for i in range(num_of_partitions-1)]
-#     raster_sweep_end = [np.argmin(np.abs( diffs[i])) for i in range(num_of_partitions-1)]
-
-#     raster_sweep_start = np.sort(raster_sweep_start)
-#     raster_sweep_end = np.sort(raster_sweep_end)
-
-#     return raster_sweep_start, raster_sweep_end
-
+""" Utility Functions from jonaszubindu """
 
 def Balance(X1, X2):
     '''
@@ -404,134 +134,7 @@ def Lazy_Balance(num_PF, num_AR):
 
 
 
-def interpolate_spectra(spectra_stats_single_obs, raster, lambda_min, lambda_max, field, line, n_breaks, threshold, calib = True):
 
-    """
-    This function interpolates the spectra onto a common, predefined wavelength grid, and applies the pre interpol and aft interpol maskings. It also normalized the spectra and removes cosmic rays with an automated cosmic ray detection technique from astroscrappy. It also tracks the statistics how many spectra are masked/removed in each step.
-
-    Inputs:
-        spectra_stats_single_obs : dict, tracks the statistics about the masked spectra in each step.
-
-        raster : object (irisreader), raster containing the raw spectra from irisreader.
-
-        lambda_min : float, minimum wavelength to interpolate on.
-
-        lambda_max : float, maximum wavelength to interpolate on.
-
-        field : str, if 'NUV' or 'FUV'
-
-        line : str, spectral line,
-
-        n_breaks : int, number of points to interpolate on.
-
-        threshold : int, float, minimum DN/s intensity to keep spectrum (get rid of low-signal/noisy spectra).
-
-        calib : bool, if the spectra should be calibrated to physical units.
-
-
-
-    """
-
-    hdrs = raster.headers
-
-    lambda_min_mes = hdrs[0]['WAVEMIN']
-    lambda_max_mes = hdrs[0]['WAVEMAX']
-    delta_lambda = hdrs[0]['CDELT1']
-    num_points = hdrs[0]['NAXIS1']
-    start_obs = Time(hdrs[0]['STARTOBS'])
-    pix_size = hdrs[0]['SUMSPAT']*0.166*u.arcsec
-    slit_width = 0.33*u.arcsec
-
-    sol_rad = 696340*u.km
-
-    d = delta_lambda*u.Angstrom/u.pixel # wavelength bin width
-    dist = earth_distance(start_obs)
-    omega = slit_width*pix_size*(sol_rad/((sol_rad/dist.to(u.km))*u.radian).to(u.arcsec))**2/(1.496E+8*u.km)**2
-
-    n_min = int(np.floor((lambda_min - lambda_min_mes)/delta_lambda))-1
-    n_max = int(np.ceil((lambda_max - lambda_min_mes)/delta_lambda))+1 # to make sure the transformation to the desired grid is
-                                                                       # possible
-    lambda_units = lambda_min_mes + np.arange(0, num_points)*delta_lambda
-    lambda_units = lambda_units[n_min:n_max]
-
-    obs_wavelength = np.linspace( lambda_min, lambda_max, num=n_breaks )
-
-    effA = get_interpolated_effective_area(start_obs, response_version=6, detector_type=field,
-                                                   obs_wavelength=obs_wavelength*u.Angstrom)
-    effA = effA.to(u.cm*u.cm)
-
-    if field == "NUV":
-        dn2phot = DN2PHOT['NUV']
-        exptime = 'EXPTIMEN'
-    else:
-        dn2phot = DN2PHOT['FUV']
-        exptime = 'EXPTIMEF'
-
-    exp_times = np.asarray([hdrs[n][exptime] for n in range(len(hdrs))])
-
-    raster_aft_exp = raster[:,:,:]/exp_times.reshape(exp_times.shape[0], 1, 1)
-
-    raster_cut = raster_aft_exp[:,:,n_min:n_max]
-
-    print("Original number of spectra : ",
-      raster_cut[np.where(np.any(raster_cut!=0, axis=-1))].shape)
-
-    spectra_stats_single_obs['Original'] = raster_cut[np.where(np.any(raster_cut!=0, axis=-1))].shape
-
-    plt.show()
-    del raster
-
-    #automatic cosmic ray removal, not thoroughly tested so far,
-    #readnoise was determined with noisy spectra standard deviation.
-    #sigclip and sigfrac was determined with trial and error on one observation in Si IV, detect cosmic is optimized for parallel computing.
-    for n in range(raster_cut.shape[0]):
-
-        crmask, _ = astroscrappy.detect_cosmics(raster_cut[n,:,:], sigclip=4.5, sigfrac=0.1, objlim=2, readnoise=2)
-        raster_cut[(n,) + np.where(np.any(crmask, axis=-1))] = np.full((1, raster_cut.shape[-1]), fill_value = 0)
-
-    print("remaining spectra after removing cosmic rays : ",
-      raster_cut[np.where(np.any(raster_cut!=0, axis=-1))].shape)
-
-    spectra_stats_single_obs['remaining cosmic'] = raster_cut[np.where(np.any(raster_cut!=0, axis=-1))].shape
-
-    interpolated_slice = clean_pre_interpol(raster_cut, threshold=threshold, mode='zeros') #, binned1
-    print("remaining spectra after cleaning with pre interpol : ",
-          interpolated_slice[np.where(np.any(interpolated_slice!=0, axis=-1))].shape)
-
-    spectra_stats_single_obs['cleaned pre interpol'] = interpolated_slice[np.where(np.any(interpolated_slice!=0, axis=-1))].shape
-
-    interpol_f_cut = interp1d(lambda_units, interpolated_slice, kind="linear", axis = -1 )
-
-    obs_wavelength = np.linspace( lambda_min, lambda_max, num=n_breaks )
-
-    interpolated_slice = interpol_f_cut( obs_wavelength )
-    interpolated_slice[np.where(np.any(np.isnan(interpolated_slice), axis= -1))] = np.full((1, interpolated_slice.shape[-1]), fill_value = 0)
-    calib = True
-
-    if calib:
-        # calibrate spectra here
-        interpolated_slice_calibrated = ((interpolated_slice/u.second)/((obs_wavelength*u.Angstrom).to(u.cm)*effA*d*omega))*dn2phot*(c.h).to(u.erg*u.second)*(c.c).to(u.cm/u.second)/u.steradian
-    else:
-        interpolated_slice_calibrated = deepcopy(interpolated_slice)
-
-    interpolated_slice_calibrated, norm_vals = normalize(interpolated_slice_calibrated)
-
-    if line == "Mg II k":
-        interpolated_slice_calibrated, binned2 = clean_aft_interpol( interpolated_slice_calibrated.reshape(raster_cut.shape[0]*raster_cut.shape[1], n_breaks), mode = 'zeros' )
-
-        print("remaining spectra after cleaning with aft interpol (only in case of Mg II h & k) : ",
-              interpolated_slice_calibrated[np.where(np.any(interpolated_slice_calibrated!=0, axis=-1))].shape)
-
-        spectra_stats_single_obs['clean aft interpol'] = interpolated_slice_calibrated[np.where(np.any(interpolated_slice_calibrated!=0, axis=-1))].shape
-
-    print(raster_cut.shape, interpolated_slice_calibrated.shape)
-    interpolated_slice_calibrated = interpolated_slice_calibrated.reshape(raster_cut.shape[:-1] + (n_breaks,))
-#     norm_vals = norm_vals.reshape(raster_cut.shape[:-1] + (1,))
-
-
-    return interpolated_slice_calibrated, norm_vals, spectra_stats_single_obs
-
-#######################################################################################################################
 
 def create_goes(df, obs_id):
 
@@ -811,7 +414,6 @@ def flare_sji_image(sji, vmax, imstep):
     plt.imshow( sji.get_image_step(imstep).clip(min=0)**0.4, origin="lower", cmap="gist_heat", vmax=vmax )
     plt.show()
 
-##########################################################################################
 
 def merge(obs_raw1, obs_raw2):
     """
@@ -821,67 +423,7 @@ def merge(obs_raw1, obs_raw2):
     obs_raw1.__dict__.update(obs_raw2.__dict__)
     return obs_raw1
 
-
-def clean_SAA_cls(obs_cls):
-        """
-        Cleans the parts of observations when IRIS crossed the southern atlantic anomaly SAA and puts them everywhere to zero.
-
-        input:
-
-        im_arr_slit: array containing the spectra ordered either by global time steps or just one slit.
-
-        """
-        df_SAA = pd.read_csv('/sml/zbindenj/saa_results.csv')
-
-        times = obs_cls.times_global[1,:]
-
-        for start, end in zip(df_SAA['start'], df_SAA['end']):
-            start = datetime.fromisoformat((start.split('.')[0]).split(' ')[-1])
-            end = datetime.fromisoformat((end.split('.')[0]).split(' ')[-1])
-
-            start_e = to_epoch(start)
-            end_e = to_epoch(end)
-
-            if ((start_e > times[0]) and (start_e < times[-1])) or ((end_e > times[0]) and (end_e < times[-1])):
-#                 print(parse_time(start_e, format='unix').to_datetime(), parse_time(end_e, format='unix').to_datetime())
-                diff = times - start_e
-                try:
-                    start_ind = np.argmin(np.abs(diff[diff<0]))
-                except Exception:
-                    start_ind = 0
-#                 print(parse_time(times[start_ind], format='unix').to_datetime())
-#                 print(start_ind)
-                diff = times - end_e
-
-                try:
-                    end_ind = np.argmin(np.abs(diff[diff>0])) + np.argmin(np.abs(diff[diff<0])) + 1 # only take steps outside of SAA
-#                     print(parse_time(times[end_ind], format='unix').to_datetime())
-#                     print(end_ind)
-                except Exception:
-                    end_ind = len(times)
-#                     print(parse_time(times[end_ind-1], format='unix').to_datetime())
-#                     print(end_ind)
-
-                obs_cls.im_arr_global[start_ind:end_ind, :, :] = np.full((obs_cls.im_arr_global[start_ind:end_ind, :, :].shape[0],
-                                                                       obs_cls.im_arr_global.shape[1],
-                                                                       obs_cls.im_arr_global.shape[2]),
-                                                                       fill_value = 0)
-                # Times remains unchanged to keep the structure of the arrays intact.
-        print("remaining spectra after removing SAA : ",
-              obs_cls.im_arr_global[np.where(np.any(obs_cls.im_arr_global!=0, axis=-1))].shape)
-
-        obs_cls.spectra_stats_single_obs['cleaned SAA'] = obs_cls.im_arr_global[np.where(np.any(obs_cls.im_arr_global!=0, axis=-1))].shape
-
-
-        try:
-            delattr(obs_cls, 'times')
-            delattr(obs_cls, 'im_arr')
-            delattr(obs_cls, 'norm_vals')
-        except Exception:
-            pass
-
-
-
+##########################################################################################
 
 
 class Obs_raw_data:
@@ -937,8 +479,6 @@ class Obs_raw_data:
 
     global methods: check each method for necessary args and kwargs
 
-        clean_SAA_cls(obs_cls) : cleans the given instance for SAA by setting SAA parts to 0
-
         transform arrays : transforms array between (n,t,y,lambda) <-> (T,y,lambda)
                            CAUTION : timeclipping destroys the equivalence between the two arrays. The function automatically
                            accounts for that by using the first and last complete raster steps.
@@ -981,43 +521,7 @@ class Obs_raw_data:
 
         else:
 
-            self.obs_id = obs_id
-
-            self.num_of_raster_pos = raster.n_raster_pos
-
-            times = [raster.get_timestamps(n) for n in range(raster.n_raster_pos)]
-            times = np.vstack(times)
-
-            self.lambda_min = lambda_min
-            self.lambda_max = lambda_max
-            self.n_breaks = n_breaks
-            self.field = field
-            self.line = line
-            self.threshold = threshold
-            self.spectra_stats_single_obs = {}
-
-
-            interpolated_image_clean_norm, norm_val_image, spectra_stats_single_obs = interpolate_spectra(self.spectra_stats_single_obs, raster, lambda_min, lambda_max, field, line, n_breaks, threshold, calib = True)
-
-            self.spectra_stats_single_obs = spectra_stats_single_obs
-
-            self.hdrs = pd.DataFrame(list(raster.headers))
-
-            # transforms image to global raster step
-            times_global, _, _ = transform_arrays(times, num_of_raster_pos=raster.n_raster_pos, forward = True)
-
-            self.times_global = times_global # contains raster position data and times for later processing.
-            self.im_arr_global = interpolated_image_clean_norm
-            self.norm_vals_global = norm_val_image
-
-
-            #clean out edges
-            self.im_arr_global[np.where((np.argmax(self.im_arr_global, axis=-1) > (self.im_arr_global.shape[-1]*0.95)) |
-                                        (np.argmax(self.im_arr_global, axis=-1) < (self.im_arr_global.shape[-1]*0.05)))] = 0
-
-            clean_SAA_cls(self)
-
-
+            raise ValueError("For Obs_raw_data preprocessing refer to the repository IRIS_FlarePrep")
 
 
     def time_clipping(self, start, end):
@@ -1168,13 +672,5 @@ def load_obs_data(filename, line, typ, only_im_arr = False):
                     }
 
         return Obs_raw_data(load_dict=load_dict)
-
-##########################################################################################
-
-def norm_log(x, min_, max_):
-    """mapping the intensity levels onto a [0,1] in a log shape"""
-    x = np.log(x)
-    normalized = (x-min_)/(max_-min_)
-    return normalized
 
 ##########################################################################################
